@@ -1,0 +1,108 @@
+---
+resource_types:
+  - name: gotify-resource
+    type: registry-image
+    source:
+      tag: latest
+      repository: fgerling/gotify-resource
+
+resources:
+  - name: gotify-server
+    type: gotify-resource
+    source:
+      url: ((gotify.url))
+      appToken: ((gotify.app_token))
+
+  - name: concourse-gotify-resource-repo
+    type: git
+    source:
+      uri: https://github.com/fgerling/concourse-gotify-resource.git
+      branch: main
+
+  - name: gotify-fgerling-latest-image
+    type: registry-image
+    source:
+      tag: latest
+      repository: fgerling/gotify-resource
+      username: ((dockerhub.username))
+      password: ((dockerhub.password))
+
+jobs:
+  - name: test
+    public: true
+    plan:
+    - get: concourse-gotify-resource-repo
+      trigger: true
+
+    - task: build-gotify-resource-test-image
+      privileged: true
+      output_mapping: {image: test-image}
+      config:
+        caches:
+          - path: cache
+        platform: linux
+        image_resource:
+          type: registry-image
+          source:
+            repository: vito/oci-build-task
+        outputs:
+          - name: image
+        inputs:
+          - name: concourse-gotify-resource-repo
+        params:
+          CONTEXT: concourse-gotify-resource-repo/
+          DOCKERFILE: concourse-gotify-resource-repo/Dockerfile.test
+          UNPACK_ROOTFS: true
+        run:
+          path: build
+
+    - task: test-gotify-resource
+      image: test-image
+      config:
+        platform: linux
+        inputs:
+          - name: concourse-gotify-resource-repo
+        run:
+          path: bash
+          args:
+            - concourse-gotify-resource-repo/test.sh
+            - concourse-gotify-resource-repo/assets
+
+
+  - name: publish
+    public: false
+    plan:
+    - get: concourse-gotify-resource-repo
+      passed: [test]
+      trigger: true
+
+    - task: build-gotify-resource-image
+      privileged: true
+      config:
+        caches:
+          - path: cache
+        platform: linux
+        image_resource:
+          type: registry-image
+          source:
+            repository: vito/oci-build-task
+        inputs:
+          - name: concourse-gotify-resource-repo
+        outputs:
+          - name: image
+        params:
+          CONTEXT: concourse-gotify-resource-repo/
+        run:
+          path: build
+
+    - put: gotify-fgerling-latest-image
+      params:
+        image: image/image.tar
+      inputs:
+        - image
+
+    - try:
+        put: gotify-server
+        params:
+          message: gotify-resource:latest published
+          priority: 5
