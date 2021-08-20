@@ -1,0 +1,67 @@
+---
+resources:
+  - name: space-nerds-in-space-repo
+    type: git
+    source:
+      uri: https://github.com/smcameron/space-nerds-in-space.git
+      branch: master
+
+  - name: snis-builder-repo
+    type: git
+    source:
+      uri: https://github.com/fgerling/snis-builder.git
+      branch: concourse
+
+  - name: snis-builder-image
+    type: registry-image
+    source:
+      tag: latest
+      repository: fgerling/snisbuilder
+      username: ((dockerhub.username))
+      password: ((dockerhub.password))
+
+jobs:
+  - name: publish-snis-builder
+    public: true
+    plan:
+    - get: space-nerds-in-space-repo
+      trigger: true
+
+    - get: snis-builder-repo
+      trigger: true
+
+    - task: build-snis-builder-image
+      privileged: true
+      output_mapping: {image: image}
+      config:
+        caches:
+          - path: cache
+        platform: linux
+        image_resource:
+          type: registry-image
+          source:
+            repository: vito/oci-build-task
+        inputs:
+          - name: snis-builder-repo
+        outputs:
+          - name: image
+        params:
+          CONTEXT: snis-builder-repo/
+          UNPACK_ROOTFS: true
+        run:
+          path: build
+
+    - task: build-snis
+      image: image
+      config:
+        platform: linux
+        run:
+          path: /entrypoint.sh
+        inputs:
+          - name: space-nerds-in-space-repo
+
+    - put: snis-builder-image
+      params:
+        image: image/image.tar
+      inputs:
+        - image
